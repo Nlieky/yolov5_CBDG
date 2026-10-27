@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 训练产物(可再生)
+runs/
+*.cache
+data/C_DET/train/labels.cache
+data/C_DET/valid/labels.cache
+
+# 空目录占位
+weights/
+
+# IDE / 系统
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store

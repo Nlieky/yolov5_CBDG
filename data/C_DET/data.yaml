@@ -1,0 +1,6 @@
+path: data/C_DET
+train: train/images
+val: valid/images
+
+nc: 3
+names: ['crack', 'pinhole', 'spot']
