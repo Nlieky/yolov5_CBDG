@@ -1,7 +1,6 @@
-# YOLOv5s + GhostConv + C3Ghost 轻量化改进
-# 参数解析: depth_multiple=0.33, width_multiple=0.50 (yolov5s scale)
-# 改动: backbone 下采样卷积 Conv→GhostConv, 特征提取模块 C3→C3Ghost
-# 首层卷积保持标准 Conv (RGB输入); head 1x1/3x3卷积保持标准 Conv 以保精度
+# YOLOv5s + GhostConv + C3Ghost 轻量化 (表5.3 GhostNet 对比行)
+# 按论文图5.7: Backbone 全部 Conv→GhostConv (含首层 k3 s2), C3→C3Ghost
+# Head/Neck 保持原版
 
 nc: 3  # 类别数: crack / pinhole / spot
 depth_multiple: 0.33  # model depth multiple
@@ -14,7 +13,7 @@ anchors:
 # YOLOv5 v7.0 backbone
 backbone:
   # [from, number, module, args]
-  [[-1, 1, Conv, [64, 6, 2, 2]],  # 0-P1/2 (p=2 显式指定, 保证偶数下采样)
+  [[-1, 1, GhostConv, [64, 3, 2]],  # 0-P1/2 (首层 GhostConv, 按论文图5.7)
    [-1, 1, GhostConv, [128, 3, 2]],  # 1-P2/4
    [-1, 3, C3Ghost, [128]],
    [-1, 1, GhostConv, [256, 3, 2]],  # 3-P3/8

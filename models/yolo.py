@@ -27,6 +27,9 @@ if platform.system() != "Windows":
 
 from models.common import (
     C3,
+    SEAttention,
+    CoordAtt,
+    BiFPN_Fusion,
     C3SPP,
     C3TR,
     SPP,
@@ -433,6 +436,13 @@ def parse_model(d, ch):
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
+        elif m in {SEAttention, CoordAtt}:  # 通道保持型注意力: args 补充输入通道
+            c2 = ch[f]
+            args = [c2, *args]
+        elif m is BiFPN_Fusion:  # 加权融合: 各路输入需同通道同尺度, c2 = c1
+            assert all(ch[x] == ch[f[0]] for x in f), f"BiFPN_Fusion inputs must have equal channels: {[ch[x] for x in f]}"
+            c2 = ch[f[0]]
+            args = [c2, len(f)]
         # TODO: channel, gw, gd
         elif m in {Detect, Segment}:
             args.append([ch[x] for x in f])

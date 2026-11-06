@@ -1,102 +1,108 @@
-# YOLOv5s-Ghost 轻量化混凝土表面缺陷检测
+# YOLOv5s_CBDG 陶瓷基片表面缺陷检测
 
-基于轻量化改进 YOLOv5s 的混凝土表面缺陷检测系统（本科毕业设计）。
+基于改进 YOLOv5s 的陶瓷基片表面缺陷分类与识别（本科毕业设计）。
 
-针对混凝土表面缺陷检测在边缘设备上部署时算力与存储受限的问题，在 YOLOv5s 基础上引入 **GhostNet** 的幽灵卷积（GhostConv）与 C3Ghost 模块替换原网络中的标准卷积和 C3 模块，在保持检测精度的前提下显著压缩模型规模。
+针对陶瓷基片表面缺陷（裂缝/针孔/斑点）检测中**小目标特征弱**与**边缘部署算力受限**两个问题，在 YOLOv5s 上组合四种改进方法，记为 **YOLOv5s_CBDG**：
 
-## 改进方案
-
-| 模型 | 参数量 | 压缩率 | 配置文件 |
+| 缩写 | 方法 | 作用位置 | 实现文件 |
 |---|---|---|---|
-| 原版 YOLOv5s | 7.03 M | — | `models/yolov5s.yaml` |
-| **YOLOv5s-Ghost（本项目）** | **4.13 M** | **↓ 41%** | `models/yolov5s+GhostConv+C3Ghost.yaml` |
+| **C** | CA 坐标注意力 (CVPR 2021) | Backbone P3/P4 C3 后 + SPPF 后 | `CoordAtt` (models/common.py) |
+| **B** | BiFPN 快速归一化加权融合 (EfficientDet) | 替换 Neck 的 Concat（双向 + 同层跳连，见论文图4.9） | `BiFPN_Fusion` (models/common.py) |
+| **D** | DWConv 深度卷积 | 替换 Neck 的标准 Conv | 官方 `DWConv` |
+| **G** | GhostConv + C3Ghost (GhostNet) | 替换 Backbone 的 Conv + C3（含首层，见论文图5.7） | 官方 `GhostConv`/`C3Ghost` |
 
-具体改动：
+## 模型配置与参数量（已验证全部可构建+前向）
 
-- **Backbone**：下采样卷积 `Conv → GhostConv`，特征提取模块 `C3 → C3Ghost`
-- **Neck/Head**：`C3 → C3Ghost`，1×1 / 3×3 卷积保留标准 `Conv` 以保障检测精度
-- 首层卷积保留标准 `Conv` 并显式指定 `p=2`（`[64, 6, 2, 2]`），保证偶数倍下采样对齐
+| 配置文件 | 参数量 | 对应论文实验 |
+|---|---|---|
+| `models/yolov5s.yaml` | 7.03 M | 基线（表4.1/4.2/5.3/5.4 第1组） |
+| `models/yolov5s+SE.yaml` | 7.07 M | 表4.1 SE 对比 |
+| `models/yolov5s+CA.yaml` | 7.06 M | 表4.1 CA 对比 / 表5.4 第2组 |
+| `models/yolov5s+BiFPN.yaml` | 7.80 M | 表4.2 BiFPN 对比 |
+| `models/yolov5s+CA+BiFPN.yaml` | 7.83 M | 表5.4 第3组 |
+| `models/yolov5s+GhostConv+C3Ghost.yaml` | 4.13 M | 表5.3 GhostNet 对比 |
+| `models/yolov5s_CBDG.yaml`（完整模型） | **4.27 M（-39%）** | 表5.4 第4组 |
 
 ## 数据集 C_DET
 
-混凝土表面缺陷数据集，3 个类别，位于 `data/C_DET/`：
+自建陶瓷基片缺陷数据集，3 类：`crack`（裂缝）/ `pinhole`（针孔）/ `spot`（斑点）。训练集 799 张、验证集 200 张，位于 `data/C_DET/`，配置 `data/C_DET/data.yaml`。
 
-| 类别 | 中文 | 说明 |
-|---|---|---|
-| crack | 裂缝 | 主要类别 |
-| pinhole | 针孔 | 样本较少（类别不平衡） |
-| spot | 斑点 | — |
-
-- 训练集 799 张 / 验证集 200 张，YOLO txt 标注格式
-- 数据配置：`data/C_DET/data.yaml`
+> 注意：pinhole 实例数明显少于其他类别，评估时需关注分类别 P/R。
 
 ## 环境配置
 
-- Python ≥ 3.8，PyTorch ≥ 1.8（CPU / GPU 均可）
-- 代码基线：[ultralytics/yolov5](https://github.com/ultralytics/yolov5) master 分支 `f44db01`（2024-09-01）
+代码基线：[ultralytics/yolov5](https://github.com/ultralytics/yolov5) master `f44db01`（2024-09-01），运行依赖 `ultralytics` pip 包（日志/绘图）。
+
+**GPU 训练机（RTX 5060 为 Blackwell 架构 sm_120，必须用 cu128 轮子 + Python ≥ 3.10）：**
 
 ```bash
-pip install -r requirements.txt
-pip install ultralytics==8.3.0 gitpython
+git clone https://github.com/Nlieky/yolov5_CBDG
+cd yolov5_CBDG
+conda create -n yolov5 python=3.11 -y && conda activate yolov5
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements.txt ultralytics==8.3.0 gitpython thop
+python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
-> 注：本项目代码运行时依赖 `ultralytics` 包（日志与绘图工具）；若 PyPI 访问受限，可从 GitHub 源安装 `pip install --no-deps git+https://github.com/ultralytics/ultralytics@v8.3.0`。
+> 最后一句必须输出 `True` 和 `RTX 5060` 才能开训。若 PyPI 走不通，torch 也可从 `pip install torch --index-url https://download.pytorch.org/whl/cu128` 直装（该域名与 PyPI 独立）。
 
-## 快速开始
+## 消融实验训练（7 组，同超参保证公平）
 
 ```bash
-# 训练（有 GPU 的机器建议 --batch-size 16）
-python train.py --data data/C_DET/data.yaml --cfg models/yolov5s+GhostConv+C3Ghost.yaml \
-    --weights yolov5s.pt --epochs 50 --imgsz 640 --batch-size 16
-
-# 基线对比（消融实验：原版 YOLOv5s）
-python train.py --data data/C_DET/data.yaml --cfg models/yolov5s.yaml \
-    --weights yolov5s.pt --epochs 50 --imgsz 640 --batch-size 16
-
-# 推理
-python detect.py --weights runs/train/exp/weights/best.pt --source {img/dir/video/camera}
-
-# 验证
-python val.py --weights runs/train/exp/weights/best.pt --data data/C_DET/data.yaml
-
-# 导出（ONNX / TensorRT / TFLite 等）
-python export.py --weights runs/train/exp/weights/best.pt --include onnx
+python train.py --cfg models/yolov5s.yaml                    --name G1_baseline --epochs 150 --imgsz 640 --batch-size 16 --device 0
+python train.py --cfg models/yolov5s+SE.yaml                 --name T4_SE      --epochs 150 --imgsz 640 --batch-size 16 --device 0
+python train.py --cfg models/yolov5s+CA.yaml                 --name G2_CA      --epochs 150 --imgsz 640 --batch-size 16 --device 0
+python train.py --cfg models/yolov5s+BiFPN.yaml              --name T4_BiFPN   --epochs 150 --imgsz 640 --batch-size 16 --device 0
+python train.py --cfg models/yolov5s+CA+BiFPN.yaml           --name G3_CA_BFPN --epochs 150 --imgsz 640 --batch-size 16 --device 0
+python train.py --cfg models/yolov5s+GhostConv+C3Ghost.yaml  --name T5_Ghost   --epochs 150 --imgsz 640 --batch-size 16 --device 0
+python train.py --cfg models/yolov5s_CBDG.yaml               --name G4_CBDG    --epochs 150 --imgsz 640 --batch-size 16 --device 0
 ```
 
-训练产物保存在 `runs/train/`（损失与指标曲线见 `results.png`），已被 `.gitignore` 排除，不入库。
+- `--data`/`--hyp`/`--weights` 用 train.py 默认值即可（已指向本仓库数据与超参，预训练 `yolov5s.pt`）
+- Ghost/CBDG 组预训练权重迁移率低（结构不匹配的层跳过），前期收敛慢是正常现象
+- 每组结束看 `runs/train/<name>/results.png`；GPU 上每组约 10~20 分钟
+- 断了续训：`python train.py --resume runs/train/<name>/weights/last.pt`
 
-## 实验结果
+## 结果填写（训练完成后替换）
 
-<!-- 正式训练完成后填写 -->
+| 网络模型 | CA | BiFPN | D+G | mAP@0.5 | mAP@0.5:0.95 | GFLOPs | 权重大小 |
+|---|---|---|---|---|---|---|---|
+| YOLOv5s (G1) | | | | 待填 | 待填 | 待填 | 待填 |
+| +CA (G2) | ✓ | | | 待填 | 待填 | 待填 | 待填 |
+| +CA+BiFPN (G3) | ✓ | ✓ | | 待填 | 待填 | 待填 | 待填 |
+| YOLOv5s_CBDG (G4) | ✓ | ✓ | ✓ | 待填 | 待填 | 待填 | 待填 |
 
-| 模型 | 参数量 | mAP@0.5 | mAP@0.5:0.95 | P | R |
-|---|---|---|---|---|---|
-| YOLOv5s | 7.03 M | 待填 | 待填 | 待填 | 待填 |
-| YOLOv5s-Ghost | 4.13 M | 待填 | 待填 | 待填 | 待填 |
+> 论文旧数据（mAP 68.9→79.4）来自未真实训练的模型，全部以本次实测替换。分类别 AP 取自各组 `results.csv` / 验证输出；GFLOPs 在训练开始时自动打印（需 thop）。
 
-> 训练流水线已在 CPU 环境完成 1 epoch 冒烟验证（数据加载、前向/反向、验证、权重保存全部正常）。注意 pinhole 类实例较少，评估时需关注分类别的 P/R 指标。
+## 推理与导出
+
+```bash
+python detect.py --weights runs/train/G4_CBDG/weights/best.pt --source data/C_DET/valid/images --conf 0.25
+python val.py --weights runs/train/G4_CBDG/weights/best.pt --data data/C_DET/data.yaml
+python export.py --weights runs/train/G4_CBDG/weights/best.pt --include onnx
+```
 
 ## 项目结构
 
 ```
-├── train.py / val.py / detect.py / export.py   # 训练/验证/推理/导出入口
+├── train.py / val.py / detect.py / export.py     # 入口（基线官方代码）
 ├── models/
-│   ├── yolov5s+GhostConv+C3Ghost.yaml          # 轻量化改进配置
-│   ├── yolov5s.yaml 等                         # 官方基线配置
-│   └── common.py / yolo.py ...                 # 模型定义（与官方 f44db01 一致）
-├── data/
-│   ├── C_DET/                                  # 数据集（799+200 张）
-│   └── hyps/                                   # 超参配置
-├── utils/                                      # 工具库（官方 f44db01）
-├── ViT.py                                      # ViT 参考实现（实验草稿，未接入）
-└── yolov5s.pt                                  # COCO 预训练权重
+│   ├── common.py                                 # + SEAttention / CoordAtt / BiFPN_Fusion
+│   ├── yolo.py                                   # parse_model 注册新模块
+│   ├── yolov5s*.yaml                             # 7 个消融配置
+├── data/C_DET/                                   # 数据集 799+200
+├── data/hyps/                                    # 超参
+└── utils/                                        # 官方 f44db01 工具库
 ```
 
 ## 致谢
 
 - [ultralytics/yolov5](https://github.com/ultralytics/yolov5)（AGPL-3.0）
+- Hou Q, et al. **Coordinate Attention for Efficient Mobile Network Design.** CVPR 2021.
+- Tan M, et al. **EfficientDet: Scalable and Efficient Object Detection.** CVPR 2020.
 - Han K, et al. **GhostNet: More Features from Cheap Operations.** CVPR 2020.
+- Hu J, et al. **Squeeze-and-Excitation Networks.** CVPR 2018.
 
 ## 许可
 
-继承 Ultralytics YOLOv5 的 [AGPL-3.0](LICENSE) 许可证；数据集 `data/C_DET/` 仅用于学术研究。
+继承 Ultralytics YOLOv5 的 [AGPL-3.0](LICENSE)；数据集 `data/C_DET/` 仅用于学术研究。

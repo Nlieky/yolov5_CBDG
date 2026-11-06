@@ -456,6 +456,85 @@ class Concat(nn.Module):
         return torch.cat(x, self.d)
 
 
+class SEAttention(nn.Module):
+    """SE 通道注意力 (Squeeze-and-Excitation, Hu et al. CVPR 2018).
+
+    通过全局平均池化提取各通道全局信息, 经全连接层学习通道权重后重标定特征图。
+    通道数保持不变: out == in。
+    """
+
+    def __init__(self, c1, reduction=16):
+        super().__init__()
+        c_ = max(8, c1 // reduction)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(c1, c_, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(c_, c1, bias=False),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.shape
+        w = self.fc(self.avg_pool(x).view(b, c)).view(b, c, 1, 1)
+        return x * w.expand_as(x)
+
+
+class CoordAtt(nn.Module):
+    """CA 坐标注意力 (Coordinate Attention, Hou et al. CVPR 2021).
+
+    分别沿 H/W 两个空间方向池化, 拼接后经共享 1x1 卷积编码, 再拆分出两个方向的
+    注意力权重相乘回原特征图, 同时编码通道关系与长程位置依赖。
+    通道数保持不变: out == in。
+    """
+
+    def __init__(self, c1, reduction=32):
+        super().__init__()
+        self.pool_w = nn.AdaptiveAvgPool2d((None, 1))  # (B,C,H,1) W方向池化
+        self.pool_h = nn.AdaptiveAvgPool2d((1, None))  # (B,C,1,W) H方向池化
+        c_ = max(8, c1 // reduction)
+        self.fc = nn.Conv2d(c1, c_, 1, bias=False)
+        self.act = nn.SiLU()
+        self.a = nn.Conv2d(c_, c1, 1, bias=False)  # H方向注意力
+        self.b = nn.Conv2d(c_, c1, 1, bias=False)  # W方向注意力
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        x_h = self.pool_h(x).permute(0, 1, 3, 2)  # (B,C,W,1)
+        x_w = self.pool_w(x)  # (B,C,H,1)
+        y = torch.cat([x_h, x_w], dim=2)  # (B,C,W+H,1)
+        y = self.act(self.fc(y))  # (B,C_,W+H,1)
+        y_h, y_w = torch.split(y, [x.shape[3], x.shape[2]], dim=2)
+        a_h = self.sigmoid(self.a(y_h.permute(0, 1, 3, 2)))  # (B,C,1,W)
+        a_w = self.sigmoid(self.b(y_w))  # (B,C,H,1)
+        return x * a_w * a_h
+
+
+class BiFPN_Fusion(nn.Module):
+    """BiFPN 快速归一化加权融合节点 (Tan et al. EfficientDet, CVPR 2020).
+
+    对同一尺度、同一通道数的 N 路输入特征做可学习加权求和:
+        out = Σ(wi / (Σwj + ε)) * xi,  wi = ReLU(可学习参数) ≥ 0
+    再经 1x1 Conv+BN+SiLU 融合通道信息。对应论文图4.9中替换 Concat 的
+    黄色菱形加权融合节点; 同层额外跳连输入(原始特征)直接并入本节点。
+    """
+
+    def __init__(self, c1, n=2):
+        super().__init__()
+        self.c1 = c1
+        self.n = n
+        self.eps = 1e-4
+        self.w = nn.Parameter(torch.ones(n, dtype=torch.float32))
+        self.post = Conv(c1, c1, 1)
+
+    def forward(self, x):
+        """x: N 路同形状特征图列表 -> 加权融合 + 1x1 卷积。"""
+        w = torch.relu(self.w)
+        w = w / (w.sum() + self.eps)
+        out = sum(wi * xi for wi, xi in zip(w, x))
+        return self.post(out)
+
+
 class DetectMultiBackend(nn.Module):
     """YOLOv5 MultiBackend class for inference on various backends including PyTorch, ONNX, TensorRT, and more."""
 

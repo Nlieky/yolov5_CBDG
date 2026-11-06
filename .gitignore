@@ -17,3 +17,6 @@ weights/
 .vscode/
 Thumbs.db
 .DS_Store
+
+# IDE / 系统
+content/
